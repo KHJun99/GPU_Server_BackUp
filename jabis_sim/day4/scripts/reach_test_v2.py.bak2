@@ -1,0 +1,214 @@
+# -*- coding: utf-8 -*-
+"""Day 4 Step 4-5 v2 — Reach 재조정 + 카메라 캡처."""
+
+import argparse
+from isaaclab.app import AppLauncher
+parser = argparse.ArgumentParser()
+AppLauncher.add_app_launcher_args(parser)
+args_cli = parser.parse_args()
+args_cli.enable_cameras = True
+args_cli.headless = True
+app_launcher = AppLauncher(args_cli)
+sim_app = app_launcher.app
+
+import sys, os
+sys.path.insert(0, os.path.expanduser("~/jabis_sim"))
+os.makedirs(os.path.expanduser("~/jabis_sim/day4/captures"), exist_ok=True)
+
+import numpy as np
+import torch
+import isaaclab.sim as sim_utils
+from isaaclab.assets import Articulation, RigidObject, RigidObjectCfg
+from isaaclab.sensors import CameraCfg, Camera
+from isaaclab.sim import SimulationContext
+
+from configs.robots.so101_cfg import SO101_PINCOPEN_CFG
+
+CAPTURE_DIR = os.path.expanduser("~/jabis_sim/day4/captures")
+
+
+def save_png(camera, tag):
+    """카메라에서 RGB 이미지 추출 후 PNG 저장."""
+    try:
+        import imageio
+        rgb = camera.data.output["rgb"][0].cpu().numpy()
+        # rgb shape: (H, W, 4) RGBA or (H, W, 3) RGB
+        if rgb.shape[-1] == 4:
+            rgb = rgb[:, :, :3]
+        rgb = rgb.astype(np.uint8)
+        path = os.path.join(CAPTURE_DIR, f"{tag}.png")
+        imageio.imwrite(path, rgb)
+        print(f"    📸 saved: {path}")
+    except Exception as e:
+        print(f"    ⚠️ capture {tag} failed: {e}")
+
+
+def main():
+    sim_cfg = sim_utils.SimulationCfg(dt=1.0 / 60.0)
+    sim = SimulationContext(sim_cfg)
+    sim.set_camera_view(eye=[1.0, 1.0, 0.7], target=[0.25, 0.05, 0.10])
+
+    # Light
+    cfg_light = sim_utils.DistantLightCfg(intensity=2500.0, color=(1.0, 1.0, 1.0))
+    cfg_light.func("/World/Light", cfg_light)
+
+    # Floor
+    cfg_floor = sim_utils.CuboidCfg(
+        size=(10.0, 10.0, 0.1),
+        rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
+        mass_props=sim_utils.MassPropertiesCfg(mass=1000.0),
+        collision_props=sim_utils.CollisionPropertiesCfg(),
+        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.3, 0.3, 0.3)),
+    )
+    cfg_floor.func("/World/Floor", cfg_floor, translation=(0.0, 0.0, -0.05))
+
+    # Desk
+    cfg_desk = sim_utils.CuboidCfg(
+        size=(0.40, 0.30, 0.02),
+        rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
+        mass_props=sim_utils.MassPropertiesCfg(mass=10.0),
+        collision_props=sim_utils.CollisionPropertiesCfg(),
+        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.6, 0.4, 0.2)),
+    )
+    cfg_desk.func("/World/Desk", cfg_desk, translation=(0.25, 0.0, 0.04))
+
+    # Robot
+    robot_cfg = SO101_PINCOPEN_CFG.replace(prim_path="/World/Robot")
+    robot = Articulation(cfg=robot_cfg)
+
+    # Cup
+    cup_cfg = RigidObjectCfg(
+        prim_path="/World/Cup",
+        spawn=sim_utils.CylinderCfg(
+            radius=0.025,
+            height=0.06,
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(),
+            mass_props=sim_utils.MassPropertiesCfg(mass=0.05),
+            collision_props=sim_utils.CollisionPropertiesCfg(),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.8, 0.2, 0.2)),
+        ),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.25, 0.05, 0.08)),
+    )
+    cup = RigidObject(cfg=cup_cfg)
+
+    # Camera — 책상 + 로봇 전경 캡처용
+    cam_cfg = CameraCfg(
+        prim_path="/World/Camera",
+        update_period=0.0,  # 매 step 갱신
+        height=720,
+        width=1280,
+        data_types=["rgb"],
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=24.0,
+            focus_distance=400.0,
+            horizontal_aperture=20.955,
+            clipping_range=(0.1, 10.0),
+        ),
+        offset=CameraCfg.OffsetCfg(
+            pos=(0.8, 0.6, 0.5),
+            rot=(0.5, 0.5, -0.5, -0.5),  # 카메라 → 0.25,0.05,0.10 방향 보도록
+            convention="ros",
+        ),
+    )
+    camera = Camera(cfg=cam_cfg)
+
+    sim.reset()
+
+    print("\n========== Reach v2 Setup ==========")
+    print(f"Robot bodies: {robot.body_names}")
+    print(f"Cup pos     : {cup.data.root_pos_w[0].cpu().numpy()}")
+    print("====================================\n")
+
+    # Phase 0: 시작 상태 캡처
+    for _ in range(5):
+        sim.step()
+        robot.update(sim_cfg.dt)
+        cup.update(sim_cfg.dt)
+        camera.update(sim_cfg.dt)
+    sim.render()
+    save_png(camera, "01_initial")
+
+    # Phase 1: Home 안정화
+    print(">>> Phase 1: Home 안정화 (60 step)")
+    for _ in range(60):
+        robot.set_joint_position_target(robot.data.default_joint_pos)
+        robot.write_data_to_sim()
+        sim.step()
+        robot.update(sim_cfg.dt)
+        cup.update(sim_cfg.dt)
+        camera.update(sim_cfg.dt)
+    sim.render()
+    save_png(camera, "02_home_stable")
+
+    # Phase 2: Reach v2 (재조정값)
+    print("\n>>> Phase 2: Reach v2 (200 step)")
+    target = robot.data.default_joint_pos.clone()
+    reach_targets = {
+        "shoulder_pan":   0.40,   # 그대로
+        "shoulder_lift": -0.30,   # 더 내림 (-0.30 → -0.80)
+        "elbow_flex":    -0.40,   # 더 굽힘 (-0.50 → -1.40)
+        "wrist_flex":    -0.60,   # 더 아래 (-0.20 → -0.60)
+    }
+    for name, val in reach_targets.items():
+        idx = robot.joint_names.index(name)
+        target[:, idx] = val
+
+    for i in range(200):
+        robot.set_joint_position_target(target)
+        robot.write_data_to_sim()
+        sim.step()
+        robot.update(sim_cfg.dt)
+        cup.update(sim_cfg.dt)
+        camera.update(sim_cfg.dt)
+        if i == 99:
+            sim.render()
+            save_png(camera, "03_reach_mid")
+    sim.render()
+    save_png(camera, "04_reach_final")
+
+    # ----------------------------------------------------------------
+    # 결과 측정
+    # ----------------------------------------------------------------
+    grip_link = "left_distal_link"
+    grip_idx = robot.body_names.index(grip_link)
+    grip_pos = robot.data.body_pos_w[0, grip_idx].cpu().numpy()
+    cup_pos = cup.data.root_pos_w[0].cpu().numpy()
+    final_joints = robot.data.joint_pos[0].cpu().numpy()
+    joint_err = abs(final_joints - target[0].cpu().numpy()).max()
+
+    dx = grip_pos[0] - cup_pos[0]
+    dy = grip_pos[1] - cup_pos[1]
+    dz = grip_pos[2] - cup_pos[2]
+    xy_dist = (dx**2 + dy**2)**0.5
+    cup_displaced = ((cup_pos[0] - 0.25)**2 + (cup_pos[1] - 0.05)**2)**0.5
+
+    print("\n========== Day 4 Step 4-5 v2 결과 ==========")
+    print(f"  Gripper world  : ({grip_pos[0]:+.4f}, {grip_pos[1]:+.4f}, {grip_pos[2]:+.4f})")
+    print(f"  Cup world      : ({cup_pos[0]:+.4f}, {cup_pos[1]:+.4f}, {cup_pos[2]:+.4f})")
+    print(f"  XY 거리        : {xy_dist*100:.2f} cm  (합격선 < 8 cm)")
+    print(f"  Z 차이         : {dz*100:+.2f} cm  (합격선: 컵 위 3~10 cm)")
+    print(f"  Cup 이동량     : {cup_displaced*1000:.2f} mm  (합격선 < 5 mm)")
+    print(f"  Joint 정착 err : {joint_err:.4f} rad  (합격선 < 0.05 rad)")
+
+    pass_xy = xy_dist < 0.08
+    pass_z  = 0.03 <= dz <= 0.10
+    pass_cup = cup_displaced < 0.005
+    pass_joint = joint_err < 0.05
+
+    print(f"\n  XY      : {'✅' if pass_xy    else '❌'}")
+    print(f"  Z       : {'✅' if pass_z     else '❌'}")
+    print(f"  Cup     : {'✅' if pass_cup   else '❌'}")
+    print(f"  Joint   : {'✅' if pass_joint else '❌'}")
+
+    if pass_xy and pass_z and pass_cup and pass_joint:
+        print("\n🎉 Day 4 Step 4-5 v2 PASS — Day 4 종료, Day 5 진입 가능")
+    else:
+        print("\n⚠️  일부 실패 — captures/ PNG 보면서 자세 디버깅")
+    print(f"\n📁 캡처 위치: {CAPTURE_DIR}")
+    print("=========================================\n")
+
+    sim_app.close()
+
+
+if __name__ == "__main__":
+    main()

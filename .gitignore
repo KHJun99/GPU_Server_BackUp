@@ -1,0 +1,15 @@
+# 산출물 재유입 방지
+__pycache__/
+*.pt
+*.pth
+*.ckpt
+*.log
+*.mp4
+runs/
+logs/
+outputs/
+checkpoints/
+demos/
+videos/
+wandb/
+events.out.tfevents*

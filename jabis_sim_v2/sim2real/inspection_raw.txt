@@ -1,0 +1,33 @@
+=====JABIS_INSPECT_BEGIN=====
+JOINT_NAMES_AND_DEFAULTS:
+  [ 0] shoulder_pan              default=+0.0000
+  [ 1] shoulder_lift             default=+0.0000
+  [ 2] elbow_flex                default=+0.0000
+  [ 3] wrist_flex                default=+1.5700
+  [ 4] wrist_roll                default=+0.0000
+  [ 5] gripper                   default=+0.0000
+  [ 6] left_proximal             default=+0.0000
+  [ 7] right_proximal            default=+0.0000
+  [ 8] left_distal               default=+0.0000
+  [ 9] right_distal              default=+0.0000
+  total=10
+ARM_ACTION:
+  arm._joint_names = ['shoulder_pan', 'shoulder_lift', 'elbow_flex', 'wrist_flex', 'wrist_roll']
+  arm._joint_ids = [0, 1, 2, 3, 4]
+GRIPPER_ACTION:
+  gripper._joint_names = ['left_proximal', 'right_proximal', 'left_distal', 'right_distal']
+  gripper._joint_ids = [6, 7, 8, 9]
+  gripper._open_command = [0.0, 0.0, 0.0, 0.0]
+  gripper._close_command = [-0.800000011920929, 0.800000011920929, 0.800000011920929, -0.800000011920929]
+ENV_ORIGINS[0]: [0.0, 0.0, 0.0]
+ROBOT_ROOT_POS_W[0]: [-9.313225746154785e-09, -1.8189894035458565e-11, -2.2351741790771484e-08]
+CUBE_ROOT_POS_W[0]: [0.3251035809516907, 0.07688715308904648, 0.05000000074505806]
+ROBOT_ROOT - ENV_ORIGIN: [-9.313225746154785e-09, -1.8189894035458565e-11, -2.2351741790771484e-08]
+CUBE - ENV_ORIGIN (= obs cube_pos if hypothesis holds): [0.3251035809516907, 0.07688715308904648, 0.05000000074505806]
+OBS_SHAPE: (1, 32)
+OBS_VALUES[0]: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3251035809516907, 0.07688715308904648, 0.05000000074505806, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+ACTION_DIM: 6
+SIM_DT: 0.008333333333333333, DECIMATION: 2, STEP_DT: 0.016666666666666666
+  env.physics_dt = 0.008333333333333333
+  env.step_dt = 0.016666666666666666
+=====JABIS_INSPECT_END=====

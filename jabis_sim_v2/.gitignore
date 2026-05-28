@@ -1,0 +1,4 @@
+
+# RL training logs (large, regenerable)
+logs/
+tasks/*.bak

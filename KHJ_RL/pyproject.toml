@@ -1,0 +1,46 @@
+[project]
+name = "khj-rl"
+version = "0.0.1"
+description = "Extensible manipulation RL framework: pluggable objects, targets, learners, and sim2real."
+requires-python = ">=3.10,<3.11"
+# Phase 1은 Jetson Orin Nano(aarch64, JetPack 6) 배포까지 고려해 의존성을 분리.
+# 기본 `dependencies`는 양쪽(x86_64 학습 호스트, Jetson) 모두에서 PyPI로 받을 수 있는 것만.
+# 플랫폼별 패키지(torch, pyrealsense2)는 extras로 분리해 README의 설치 가이드를 따라 설치.
+dependencies = [
+    # numerical core (torch는 platform별 wheel — extras로 분리)
+    "numpy>=1.24,<2.0",
+    # RL / env interface
+    "gymnasium>=0.29,<2.0",
+    # perception (opencv-python wheel은 x86_64/aarch64 모두 제공.
+    # Jetson에서 CUDA-accel이 필요하면 NVIDIA가 빌드한 opencv를 별도 사용)
+    "opencv-python>=4.8,<5.0",
+    # config / logging
+    "omegaconf>=2.3,<3.0",
+    "tensorboard>=2.15,<3.0",
+    "tqdm>=4.65,<5.0",
+]
+# Isaac Lab / Isaac Sim은 pip dependency가 아님. NVIDIA 절차로 별도 설치.
+
+[project.optional-dependencies]
+# 학습 호스트(x86_64, CUDA 12.8 driver, L40S). Isaac Lab 0.47.x가 torch>=2.7을 강제하므로
+# host extras는 그쪽에 맞춤. PyTorch 공식 cu128 index 사용:
+#   pip install torch==2.7.0 --index-url https://download.pytorch.org/whl/cu128
+# Jetson에서는 host extras를 사용하지 않고 [jetson] (별도 NVIDIA wheel) 경로로 간다.
+host = [
+    "torch>=2.7,<2.8",
+    "pyrealsense2>=2.55,<3.0",
+]
+# Jetson Orin Nano(aarch64, JetPack 6). torch는 NVIDIA 공식 wheel,
+# pyrealsense2는 librealsense source build로 설치. pip extras는 비워둠.
+jetson = []
+dev = [
+    "ruff>=0.4",
+    "pytest>=8.0",
+]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

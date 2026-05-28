@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>KHJ_RL CubeLift Viewer</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0;
+      padding: 16px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #111;
+      color: #ddd;
+    }
+    .row { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+    input[type="text"] {
+      flex: 1;
+      padding: 6px 10px;
+      background: #222;
+      color: #ddd;
+      border: 1px solid #444;
+      border-radius: 4px;
+      font-family: ui-monospace, Menlo, monospace;
+    }
+    button {
+      padding: 6px 14px;
+      background: #2563eb;
+      color: white;
+      border: 0;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    button:disabled { background: #555; cursor: not-allowed; }
+    #status { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #888; }
+    #viewport {
+      display: block;
+      max-width: 100%;
+      background: #000;
+      border: 1px solid #333;
+      border-radius: 4px;
+      image-rendering: -webkit-optimize-contrast;
+    }
+    .stats { margin-top: 8px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #888; }
+  </style>
+</head>
+<body>
+  <div class="row">
+    <input type="text" id="url" value="ws://localhost:8765/" />
+    <button id="connect">Connect</button>
+    <button id="disconnect" disabled>Disconnect</button>
+  </div>
+  <div id="status">disconnected</div>
+  <img id="viewport" alt="awaiting frames…" />
+  <div class="stats">
+    <span id="fps">fps: —</span> &nbsp;·&nbsp;
+    <span id="bytes">last frame: — B</span> &nbsp;·&nbsp;
+    <span id="frames">frames: 0</span>
+  </div>
+
+  <script>
+    const urlInput = document.getElementById("url");
+    const btnConnect = document.getElementById("connect");
+    const btnDisconnect = document.getElementById("disconnect");
+    const statusEl = document.getElementById("status");
+    const img = document.getElementById("viewport");
+    const fpsEl = document.getElementById("fps");
+    const bytesEl = document.getElementById("bytes");
+    const framesEl = document.getElementById("frames");
+
+    let ws = null;
+    let lastObjectUrl = null;
+    let frameCount = 0;
+    let lastFpsTick = performance.now();
+    let lastFpsCount = 0;
+
+    function setStatus(text, color) {
+      statusEl.textContent = text;
+      statusEl.style.color = color || "#888";
+    }
+
+    function connect() {
+      const url = urlInput.value.trim();
+      if (!url) return;
+      try {
+        ws = new WebSocket(url);
+      } catch (err) {
+        setStatus(`error: ${err.message}`, "#ef4444");
+        return;
+      }
+      ws.binaryType = "blob";
+      setStatus(`connecting → ${url}`, "#fbbf24");
+      btnConnect.disabled = true;
+      btnDisconnect.disabled = false;
+
+      ws.onopen = () => setStatus(`connected → ${url}`, "#10b981");
+
+      ws.onmessage = (ev) => {
+        if (!(ev.data instanceof Blob)) return;
+        // Revoke previous object URL on next frame to avoid leaking; can't
+        // do it inline because the <img> may still be decoding it.
+        const next = URL.createObjectURL(ev.data);
+        const prev = lastObjectUrl;
+        img.onload = () => { if (prev) URL.revokeObjectURL(prev); };
+        img.src = next;
+        lastObjectUrl = next;
+        frameCount += 1;
+        bytesEl.textContent = `last frame: ${ev.data.size} B`;
+        framesEl.textContent = `frames: ${frameCount}`;
+      };
+
+      ws.onerror = () => setStatus("ws error", "#ef4444");
+      ws.onclose = () => {
+        setStatus("disconnected", "#888");
+        btnConnect.disabled = false;
+        btnDisconnect.disabled = true;
+        ws = null;
+      };
+    }
+
+    function disconnect() {
+      if (ws) ws.close();
+    }
+
+    btnConnect.addEventListener("click", connect);
+    btnDisconnect.addEventListener("click", disconnect);
+
+    // Rolling 1-second FPS readout.
+    setInterval(() => {
+      const now = performance.now();
+      const dt = (now - lastFpsTick) / 1000;
+      const fps = (frameCount - lastFpsCount) / dt;
+      lastFpsTick = now;
+      lastFpsCount = frameCount;
+      fpsEl.textContent = `fps: ${fps.toFixed(1)}`;
+    }, 1000);
+  </script>
+</body>
+</html>

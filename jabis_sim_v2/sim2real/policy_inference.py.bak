@@ -1,0 +1,127 @@
+"""Phase 1 dry-run inferencer for the PnP PPO policy.
+
+Loads the actor MLP (rsl_rl ActorCritic) directly into an nn.Sequential so the
+real-robot side has zero dependency on rsl_rl / IsaacLab. Deterministic mean
+action only -- no sampling, std is ignored.
+
+Obs layout (32 dim) and action layout (6 dim) are documented in the project
+deploy notes; this file only handles the network forward pass.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import numpy as np
+import torch
+import torch.nn as nn
+
+DEFAULT_CHECKPOINT = (
+    "/home/j-k14d101/jabis_sim_v2/tasks/pnp_98pct_backup/ppo_pnp_98pct.pt"
+)
+
+OBS_DIM = 32
+ACTION_DIM = 6
+ACTOR_PREFIX = "actor."
+
+
+def _build_actor() -> nn.Sequential:
+    return nn.Sequential(
+        nn.Linear(OBS_DIM, 256),
+        nn.ELU(),
+        nn.Linear(256, 128),
+        nn.ELU(),
+        nn.Linear(128, 64),
+        nn.ELU(),
+        nn.Linear(64, ACTION_DIM),
+    )
+
+
+class PnPPolicyInferencer:
+    def __init__(self, checkpoint_path: str, device: str = "cpu") -> None:
+        self.checkpoint_path = checkpoint_path
+        self.device = torch.device(device)
+
+        self.actor = _build_actor()
+
+        ckpt = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+        if "model_state_dict" not in ckpt:
+            raise RuntimeError(
+                f"checkpoint missing 'model_state_dict' key; got {list(ckpt.keys())}"
+            )
+
+        full_sd = ckpt["model_state_dict"]
+        actor_sd = {
+            k[len(ACTOR_PREFIX):]: v
+            for k, v in full_sd.items()
+            if k.startswith(ACTOR_PREFIX)
+        }
+        if not actor_sd:
+            raise RuntimeError(
+                "no 'actor.*' keys found in checkpoint state_dict; "
+                f"keys={list(full_sd.keys())}"
+            )
+
+        # strict=True surfaces any structural mismatch (missing/unexpected keys)
+        self.actor.load_state_dict(actor_sd, strict=True)
+        self.actor.to(self.device).eval()
+
+        self.iter = int(ckpt.get("iter", -1))
+        self.num_params = sum(p.numel() for p in self.actor.parameters())
+
+    def get_action(self, obs: np.ndarray) -> np.ndarray:
+        if not isinstance(obs, np.ndarray):
+            raise TypeError(f"obs must be np.ndarray, got {type(obs)}")
+        if obs.shape != (OBS_DIM,):
+            raise ValueError(f"obs shape must be ({OBS_DIM},), got {obs.shape}")
+
+        with torch.no_grad():
+            x = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
+            action = self.actor(x).cpu().numpy()
+
+        if action.shape != (ACTION_DIM,):
+            raise RuntimeError(
+                f"actor output shape must be ({ACTION_DIM},), got {action.shape}"
+            )
+        return action
+
+
+def _fmt(arr: np.ndarray) -> str:
+    return "[" + ", ".join(f"{x:+.4f}" for x in arr) + "]"
+
+
+def _sanity_check(checkpoint_path: str) -> None:
+    print(f"[Policy] loading {checkpoint_path}")
+    policy = PnPPolicyInferencer(checkpoint_path, device="cpu")
+    print(f"[Policy] loaded {Path(checkpoint_path).name}")
+    print(f"[Policy] iter={policy.iter}, params={policy.num_params:,}")
+    if policy.num_params != 49_990:
+        raise RuntimeError(
+            f"unexpected actor param count: {policy.num_params} (expected 49,990)"
+        )
+
+    # Test 1: zeros
+    zeros_obs = np.zeros(OBS_DIM, dtype=np.float32)
+    zeros_action = policy.get_action(zeros_obs)
+    print("\n[Test 1] zeros(32)")
+    print(f"  action  = {_fmt(zeros_action)}")
+    print(f"  min/max = {zeros_action.min():+.4f} / {zeros_action.max():+.4f}")
+
+    # Test 2: small random
+    rng = np.random.default_rng(seed=0)
+    print("\n[Test 2] randn(32) * 0.1  x3")
+    for i in range(3):
+        obs = (rng.standard_normal(OBS_DIM) * 0.1).astype(np.float32)
+        action = policy.get_action(obs)
+        print(
+            f"  [{i}] action={_fmt(action)} "
+            f"range=[{action.min():+.4f}, {action.max():+.4f}]"
+        )
+
+    print("\n[Policy] sanity check OK")
+
+
+if __name__ == "__main__":
+    ckpt_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_CHECKPOINT
+    _sanity_check(ckpt_path)

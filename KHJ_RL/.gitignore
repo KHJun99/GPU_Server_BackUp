@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Env / lock
+.venv/
+.env
+uv.lock
+
+# Build
+build/
+dist/
+
+# Experiment artifacts
+runs/
+logs/
+checkpoints/
+videos/
+demos/
+
+# Robot assets (URDF / mesh STL / USD — large binaries from external repos)
+assets/raw/
+assets/converted/
+
+# Editor
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Local debug / scratch (frame captures, screenshots, accidental ${data} dir)
+*.png
+*.jpg
+*.jpeg
+${data}/

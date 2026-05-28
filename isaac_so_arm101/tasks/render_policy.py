@@ -1,0 +1,235 @@
+"""Unified video-render driver — runs oracle or BC policy in the
+``Isaac-SO-ARM101-Lift-Cube-Video-v0`` env (single env + top-down TiledCamera) for
+fixed seeds and writes one mp4 per seed.
+
+Usage examples
+--------------
+
+  # Oracle with session-7 4.C threshold:
+  CUDA_VISIBLE_DEVICES=1 uv run python tasks/render_policy.py \\
+      --policy oracle --seeds 0,1,2 --steps 500 \\
+      --reach_dist 0.04 --descend_z_dist 0.025 --reach_above_dz 0.05 --descend_dz 0.020 \\
+      --out_dir /home/j-k14d101/jabis_sim/day5/videos/session7 \\
+      --tag oracle_4c_v1 --headless --enable_cameras
+
+  # BC actor (session-8):
+  CUDA_VISIBLE_DEVICES=1 uv run python tasks/render_policy.py \\
+      --policy bc --bc_actor tasks/bc_actor_session8_v1.pt \\
+      --seeds 0,1,2 --steps 500 --action_repeat 2 \\
+      --out_dir /home/j-k14d101/jabis_sim/day5/videos/session8 \\
+      --tag bc_v1 --headless --enable_cameras
+"""
+
+import argparse
+import os
+import sys
+
+from isaaclab.app import AppLauncher
+
+import isaac_so_arm101.scripts.rsl_rl.cli_args as cli_args  # isort: skip
+
+parser = argparse.ArgumentParser(description="Render policy rollouts to mp4.")
+parser.add_argument("--policy", choices=["oracle", "bc", "ppo"], required=True)
+parser.add_argument("--ppo_ckpt", default=None,
+                    help="path to rsl_rl model_<N>.pt (required when --policy ppo)")
+parser.add_argument("--views", default="top",
+                    help="comma-separated view names (e.g. 'top,diag'); each maps "
+                         "to a sensor named '<view>_camera' on env.scene.sensors.")
+parser.add_argument("--task", default="Isaac-SO-ARM101-Lift-Cube-Video-v0")
+parser.add_argument("--agent", default="rsl_rl_cfg_entry_point")
+parser.add_argument("--seeds", default="0,1,2",
+                    help="comma-separated integer seeds")
+parser.add_argument("--steps", type=int, default=500,
+                    help="max steps per episode (env auto-resets at episode end)")
+parser.add_argument("--out_dir", required=True)
+parser.add_argument("--tag", default="policy",
+                    help="filename prefix: <tag>_seed<N>.mp4")
+parser.add_argument("--fps", type=int, default=30)
+parser.add_argument("--bc_actor", default=None,
+                    help="path to BC actor .pt (required when --policy bc)")
+parser.add_argument("--action_repeat", type=int, default=1)
+parser.add_argument("--disable_fabric", action="store_true", default=False)
+
+# Oracle hyperparams (only used when --policy oracle).
+parser.add_argument("--scale", type=float, default=1.5)
+parser.add_argument("--reach_above_dz", type=float, default=0.10)
+parser.add_argument("--descend_dz", type=float, default=0.005)
+parser.add_argument("--lift_dz", type=float, default=0.10)
+parser.add_argument("--reach_dist", type=float, default=0.02)
+parser.add_argument("--descend_z_dist", type=float, default=0.005)
+parser.add_argument("--close_steps", type=int, default=8)
+parser.add_argument("--max_ee_step", type=float, default=0.02)
+parser.add_argument("--success_z", type=float, default=0.10)
+
+cli_args.add_rsl_rl_args(parser)
+AppLauncher.add_app_launcher_args(parser)
+args_cli, hydra_args = parser.parse_known_args()
+sys.argv = [sys.argv[0]] + hydra_args
+# Force camera rendering on (TiledCamera requires GPU rendering pipeline).
+args_cli.enable_cameras = True
+
+app_launcher = AppLauncher(args_cli)
+simulation_app = app_launcher.app
+
+import gymnasium as gym  # noqa: E402
+import imageio  # noqa: E402
+import numpy as np  # noqa: E402
+import torch  # noqa: E402
+
+from isaaclab.envs import ManagerBasedRLEnvCfg  # noqa: E402
+from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper  # noqa: E402
+
+import isaaclab_tasks  # noqa: F401, E402
+import isaac_so_arm101.tasks  # noqa: F401, E402
+from isaaclab_tasks.utils.hydra import hydra_task_config  # noqa: E402
+
+sys.path.insert(0, "/home/j-k14d101/jabis_sim/sim2real/oracle")
+from oracle_policy import OraclePolicy  # noqa: E402
+from train_bc import BCActor  # noqa: E402
+
+from rsl_rl.runners import OnPolicyRunner  # noqa: E402
+
+
+def build_oracle(env, args):
+    """Construct OraclePolicy bound to the given env."""
+    n_envs = env.unwrapped.num_envs
+    device = env.unwrapped.device
+    robot = env.unwrapped.scene["robot"]
+    object_asset = env.unwrapped.scene["object"]
+
+    def goal_provider() -> torch.Tensor:
+        cmd = env.unwrapped.command_manager.get_command("object_pose")
+        return cmd[:, 0:3].detach()
+
+    oracle = OraclePolicy(
+        num_envs=n_envs, device=device,
+        scale=args.scale,
+        reach_above_dz=args.reach_above_dz,
+        descend_dz=args.descend_dz,
+        lift_dz=args.lift_dz,
+        reach_dist=args.reach_dist,
+        descend_z_dist=args.descend_z_dist,
+        close_steps=args.close_steps,
+        max_ee_step=args.max_ee_step,
+        success_z=args.success_z,
+    )
+    oracle.setup(robot=robot, object_asset=object_asset,
+                 target_pos_b_provider=goal_provider)
+    return oracle
+
+
+def load_bc_actor(path: str, device: torch.device) -> BCActor:
+    payload = torch.load(path, map_location=device, weights_only=False)
+    sd = payload.get("actor_state_dict", payload)
+    arch = payload.get("model_arch", {})
+    obs_dim = arch.get("obs_dim", 36)
+    act_dim = arch.get("act_dim", 6)
+    hidden_dims = tuple(arch.get("hidden_dims", (256, 128, 64)))
+    actor = BCActor(obs_dim=obs_dim, act_dim=act_dim, hidden_dims=hidden_dims).to(device)
+    actor.net.load_state_dict(sd)
+    actor.eval()
+    return actor
+
+
+def grab_rgb(env, sensor_name: str = "top_camera") -> np.ndarray:
+    """Return H×W×3 uint8 RGB from the named camera sensor."""
+    sensors = env.unwrapped.scene.sensors
+    if sensor_name not in sensors:
+        raise KeyError(f"camera sensor '{sensor_name}' not in scene.sensors "
+                       f"(available: {list(sensors.keys())})")
+    cam = sensors[sensor_name]
+    rgb = cam.data.output["rgb"][0]
+    rgb = rgb.detach().cpu().numpy()
+    if rgb.dtype != np.uint8:
+        rgb = (np.clip(rgb, 0.0, 1.0) * 255).astype(np.uint8) if rgb.max() <= 1.0 \
+              else rgb.astype(np.uint8)
+    if rgb.ndim == 3 and rgb.shape[-1] == 4:
+        rgb = rgb[:, :, :3]
+    return rgb
+
+
+@hydra_task_config(args_cli.task, args_cli.agent)
+def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg):
+    agent_cfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
+    env_cfg.scene.num_envs = 1  # video env always 1
+
+    seeds = [int(s) for s in args_cli.seeds.split(",")]
+    view_names = [v.strip() for v in args_cli.views.split(",") if v.strip()]
+    os.makedirs(args_cli.out_dir, exist_ok=True)
+
+    env = gym.make(args_cli.task, cfg=env_cfg, render_mode=None)
+    env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
+    device = env.unwrapped.device
+
+    oracle = None
+    actor = None
+    runner = None
+    if args_cli.policy == "oracle":
+        oracle = build_oracle(env, args_cli)
+    elif args_cli.policy == "bc":
+        if args_cli.bc_actor is None:
+            raise SystemExit("--bc_actor required when --policy bc")
+        actor = load_bc_actor(args_cli.bc_actor, device)
+    elif args_cli.policy == "ppo":
+        if args_cli.ppo_ckpt is None:
+            raise SystemExit("--ppo_ckpt required when --policy ppo")
+        runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=str(device))
+        runner.load(args_cli.ppo_ckpt)
+        runner.alg.policy.eval()
+        print(f"[INFO] PPO checkpoint loaded: {args_cli.ppo_ckpt}")
+
+    print(f"[INFO] policy={args_cli.policy}  task={args_cli.task}  "
+          f"seeds={seeds}  steps={args_cli.steps}")
+
+    for seed_val in seeds:
+        env_cfg.seed = seed_val
+        env.unwrapped.seed(seed_val)
+        obs_dict, _ = env.reset()
+        if oracle is not None:
+            oracle.reset(env_indices=[0])
+
+        frames_by_view: dict[str, list[np.ndarray]] = {v: [] for v in view_names}
+        last_action: torch.Tensor | None = None
+        for step_idx in range(args_cli.steps):
+            if args_cli.policy == "oracle":
+                if step_idx == 0 or step_idx % args_cli.action_repeat == 0:
+                    action, _ = oracle.compute()
+                    last_action = action
+                action_to_apply = last_action
+            elif args_cli.policy == "bc":
+                if step_idx % args_cli.action_repeat == 0:
+                    obs_t = obs_dict if isinstance(obs_dict, torch.Tensor) else obs_dict["policy"]
+                    with torch.no_grad():
+                        last_action = actor(obs_t.to(device))
+                action_to_apply = last_action
+            else:  # ppo
+                if step_idx % args_cli.action_repeat == 0:
+                    obs_t = obs_dict if isinstance(obs_dict, torch.Tensor) else obs_dict["policy"]
+                    ppo_obs = {"policy": obs_t.to(device)}
+                    with torch.no_grad():
+                        last_action = runner.alg.policy.act_inference(ppo_obs)
+                action_to_apply = last_action
+
+            with torch.no_grad():
+                obs_dict, _, dones, _ = env.step(action_to_apply)
+                done = bool(dones[0]) if hasattr(dones, "__len__") else bool(dones)
+
+            for v in view_names:
+                frames_by_view[v].append(grab_rgb(env, sensor_name=f"{v}_camera"))
+
+            if done and oracle is not None:
+                oracle.reset(env_indices=[0])
+
+        for v, fr in frames_by_view.items():
+            out_path = os.path.join(
+                args_cli.out_dir, f"{args_cli.tag}_{v}_seed{seed_val}.mp4"
+            )
+            imageio.mimsave(out_path, fr, fps=args_cli.fps)
+            print(f"[DONE] seed={seed_val} view={v} → {out_path}  frames={len(fr)}")
+
+    env.close()
+
+
+if __name__ == "__main__":
+    main()
+    simulation_app.close()

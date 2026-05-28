@@ -1,0 +1,104 @@
+--- git status ---
+On branch main
+Your branch is up to date with 'origin/main'.
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   pyproject.toml
+	modified:   src/isaac_so_arm101/scripts/rsl_rl/train.py
+	modified:   src/isaac_so_arm101/tasks/lift/joint_pos_env_cfg.py
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	pyproject.toml.bak
+	src/isaac_so_arm101/tasks/lift/joint_pos_env_cfg.py.bak
+
+no changes added to commit (use "git add" and/or "git commit -a") 
+
+
+--- git diff ---
+diff --git a/pyproject.toml b/pyproject.toml
+index b43f97f..c5a3a4f 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -6,7 +6,7 @@ readme = "README.md"
+ authors = [
+     { name = "Louis Le Lay", email = "le.lay.louis@gmail.com" }
+ ]
+-requires-python = "==3.11.*"
++requires-python = ">=3.10"
+ dependencies = [
+     "isaaclab[all,isaacsim]==2.3.0",
+     "torch==2.7.0",
+diff --git a/src/isaac_so_arm101/scripts/rsl_rl/train.py b/src/isaac_so_arm101/scripts/rsl_rl/train.py
+index 625b4c5..4604a17 100644
+--- a/src/isaac_so_arm101/scripts/rsl_rl/train.py
++++ b/src/isaac_so_arm101/scripts/rsl_rl/train.py
+@@ -56,7 +56,7 @@ import platform
+ from packaging import version
+ 
+ # check minimum supported rsl-rl version
+-RSL_RL_VERSION = "3.0.1"
++RSL_RL_VERSION = "2.3.1"
+ installed_version = metadata.version("rsl-rl-lib")
+ if version.parse(installed_version) < version.parse(RSL_RL_VERSION):
+     if platform.system() == "Windows":
+diff --git a/src/isaac_so_arm101/tasks/lift/joint_pos_env_cfg.py b/src/isaac_so_arm101/tasks/lift/joint_pos_env_cfg.py
+index c78ef73..4382b9b 100644
+--- a/src/isaac_so_arm101/tasks/lift/joint_pos_env_cfg.py
++++ b/src/isaac_so_arm101/tasks/lift/joint_pos_env_cfg.py
+@@ -18,6 +18,9 @@ from isaaclab.sensors.frame_transformer.frame_transformer_cfg import (
+ )
+ from isaaclab.sim.schemas.schemas_cfg import RigidBodyPropertiesCfg
+ from isaaclab.sim.spawners.from_files.from_files_cfg import UsdFileCfg
++from isaaclab.sim.spawners.shapes import CuboidCfg
++from isaaclab.sim.spawners.materials import PreviewSurfaceCfg
++from isaaclab.sim.schemas.schemas_cfg import MassPropertiesCfg, CollisionPropertiesCfg
+ from isaaclab.utils import configclass
+ from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
+ from isaac_so_arm101.robots import SO_ARM100_CFG, SO_ARM101_CFG  # noqa: F401
+@@ -55,9 +58,8 @@ class SoArm100LiftCubeEnvCfg(LiftEnvCfg):
+         self.scene.object = RigidObjectCfg(
+             prim_path="{ENV_REGEX_NS}/Object",
+             init_state=RigidObjectCfg.InitialStateCfg(pos=[0.2, 0.0, 0.015], rot=[1, 0, 0, 0]),
+-            spawn=UsdFileCfg(
+-                usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd",
+-                scale=(0.5, 0.5, 0.5),
++            spawn=CuboidCfg(
++                size=(0.04, 0.04, 0.04),
+                 rigid_props=RigidBodyPropertiesCfg(
+                     solver_position_iteration_count=16,
+                     solver_velocity_iteration_count=1,
+@@ -66,6 +68,9 @@ class SoArm100LiftCubeEnvCfg(LiftEnvCfg):
+                     max_depenetration_velocity=5.0,
+                     disable_gravity=False,
+                 ),
++                mass_props=MassPropertiesCfg(mass=0.05),
++                collision_props=CollisionPropertiesCfg(),
++                visual_material=PreviewSurfaceCfg(diffuse_color=(1.0, 0.2, 0.2)),
+             ),
+         )
+ 
+@@ -130,9 +135,8 @@ class SoArm101LiftCubeEnvCfg(LiftEnvCfg):
+         self.scene.object = RigidObjectCfg(
+             prim_path="{ENV_REGEX_NS}/Object",
+             init_state=RigidObjectCfg.InitialStateCfg(pos=[0.2, 0.0, 0.015], rot=[1, 0, 0, 0]),
+-            spawn=UsdFileCfg(
+-                usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd",
+-                scale=(0.5, 0.5, 0.5),
++            spawn=CuboidCfg(
++                size=(0.04, 0.04, 0.04),
+                 rigid_props=RigidBodyPropertiesCfg(
+                     solver_position_iteration_count=16,
+                     solver_velocity_iteration_count=1,
+@@ -141,6 +145,9 @@ class SoArm101LiftCubeEnvCfg(LiftEnvCfg):
+                     max_depenetration_velocity=5.0,
+                     disable_gravity=False,
+                 ),
++                mass_props=MassPropertiesCfg(mass=0.05),
++                collision_props=CollisionPropertiesCfg(),
++                visual_material=PreviewSurfaceCfg(diffuse_color=(1.0, 0.2, 0.2)),
+             ),
+         )
+ 
