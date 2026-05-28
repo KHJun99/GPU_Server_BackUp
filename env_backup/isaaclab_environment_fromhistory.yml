@@ -1,0 +1,9 @@
+name: isaaclab
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - cmake
+  - libglu
+  - nodejs
+prefix: /home/j-k14d101/.conda/envs/isaaclab

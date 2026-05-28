@@ -1,0 +1,6 @@
+name: jabis-sim
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+prefix: /home/j-k14d101/.conda/envs/jabis-sim
